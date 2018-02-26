@@ -1,0 +1,34 @@
+{
+  "name": "@types/pokedex-promise-v2",
+  "version": "3.0.0",
+  "private": true,
+  "description": "TypeScript definitions for pokedex-promise-v2 and PokeAPI endpoints.",
+  "typings": "index.d.ts",
+  "scripts": {
+    "build": "node ./generator"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mudkipme/pokeapi-v2-typescript.git"
+  },
+  "keywords": [
+    "pokeapi",
+    "typescript"
+  ],
+  "author": "Mudkip",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mudkipme/pokeapi-v2-typescript/issues"
+  },
+  "homepage": "https://github.com/mudkipme/pokeapi-v2-typescript#readme",
+  "peerDependencies": {
+    "typescript": ">=2.0.0"
+  },
+  "devDependencies": {
+    "axios": "^0.18.0",
+    "change-case": "^3.0.1",
+    "cheerio": "^1.0.0-rc.2",
+    "markdown-it": "^8.4.1",
+    "turndown": "^4.0.1"
+  }
+}
