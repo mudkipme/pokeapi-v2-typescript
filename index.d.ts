@@ -186,7 +186,7 @@ declare module "pokedex-promise-v2" {
             /** The pokemon species at this point in the evolution chain */
             species: NamedAPIResource<PokemonSpecies>;
             /** All details regarding the specific details of the referenced pokémon species evolution */
-            evolution_details: EvolutionDetail | null;
+            evolution_details: EvolutionDetail[] | null;
             /** A List of chain objects. */
             evolves_to: ChainLink[];
         }
@@ -925,6 +925,7 @@ declare module "pokedex-promise-v2" {
         interface PokemonMoveVersionDetails {
             version_group: NamedAPIResource<VersionGroup>;
             move_learn_method: NamedAPIResource<MoveLearnMethod>;
+            level_learned_at: number;
         }
 
         interface PokemonMove {
