@@ -1,197 +1,296 @@
-const axios = require('axios');
-const MarkdownIt = require('markdown-it');
-const cheerio = require('cheerio');
-const TurndownService = require('turndown');
-const changeCase = require('change-case');
-const fs = require('fs');
+const { Project, Writers } = require('ts-morph');
+const fetch = require('node-fetch');
+const { endpoints } = require('pokedex-promise-v2/src/endpoints');
+const { rootEndpoints } = require('pokedex-promise-v2/src/rootEndpoints');
 
-const md = new MarkdownIt({
-    html: true
-});
-const turndownService = new TurndownService();
-const apiResourceNames = ['APIResource', 'APIResourceList', 'NamedAPIResource', 'NamedAPIResourceList'];
+const docList = [
+    'berries',
+    'contests',
+    'encounters',
+    'evolution',
+    'games',
+    'items',
+    'locations',
+    'machines',
+    'moves',
+    'pokemon',
+    'resource-lists',
+    'utility',
+];
 
-function formatDataType(dataType) {
-    dataType = dataType.split('é').join('e');
-    dataType = dataType.split('integer').join('number');
-    dataType = dataType.replace(/\s+\(([\w\s]+)\)/, '<$1>');
-    dataType = dataType.replace(/^list\s+(.*)$/, '$1[]');
-    dataType = dataType.split(' ').join('');
-    if (apiResourceNames.includes(dataType)) {
-        dataType = dataType + '<T>';
+const skips = ['APIResource', 'APIResourceList', 'NamedAPIResource', 'NamedAPIResourceList'];
+const apiList = [];
+
+function convertType(type) {
+    let result;
+    if (type.type === 'list') {
+        result = `${convertType(type.of)}[]`;
+    } else if (type.type) {
+        result = `${type.type}<${convertType(type.of)}>`;
+    } else if (type === 'integer') {
+        result = 'number';
+    } else {
+        result = type;
     }
-    if (dataType.substr(-2) === '[]' && apiResourceNames.includes(dataType.substr(0, dataType.length - 2))) {
-        dataType = dataType.substr(0, dataType.length - 2) + '<T>[]';
-    }
-    return dataType;
+    return result;
 }
 
-async function parse() {
-    const { data } = await axios.get('https://raw.githubusercontent.com/PokeAPI/pokeapi/master/pokemon_v2/README.md', { responseType: 'text'});
-
-    const html = md.render(data);
-    const $ = cheerio.load(html);
-
-    const result = [];
-
-    $('table').each((_, ele) => {
-        let name = $(ele).prev('h4').text();
-        if (!name) {
-            return;
+// find nullable (based on examples, not accurate)
+function findNullable(response, model, api) {
+    if (!response) {
+        return;
+    }
+    if (Array.isArray(response) && response.length > 0) {
+        return findNullable(response[0], model, api);
+    }
+    for (const [key, data] of Object.entries(response)) {
+        const field = model.fields.find(field => field.name === key);
+        if (!field) {
+            console.warn(`field: ${key} not found in api ${api.name}`);
+            continue;
         }
-        name = name.split(' ').join('');
-        if (apiResourceNames.includes(name)) {
-            name = name + '<T>';
+        if (data === null) {
+            field.nullable = true;
+            continue;
         }
-
-        // find attributes
-        const attributes = [];
-        $(ele).find('tr').each((i, tr) => {
-            if (i === 0) {
-                return;
+        if (Array.isArray(data) && data.length > 0) {
+            const model = api.responseModels.find(model => model.name === field.type.of);
+            if (model) {
+                findNullable(data[0], model, api);
             }
-            let name = $(tr).find('td:first-of-type').text();
-            name = name.split(' ').join('_');
-            let description = $(tr).find('td:nth-of-type(2)').html();
-            description = turndownService.turndown(description);
-            let dataType = $(tr).find('td:nth-of-type(3)').text();
-            dataType = formatDataType(dataType);
-            attributes.push({
-                name,
-                description,
-                dataType,
-                nullable: false
+        }
+        if (typeof data === 'object') {
+            const model = api.responseModels.find(model => model.name === field.type);
+            if (model) {
+                findNullable(data, model, api);
+            }
+        }
+    }
+}
+
+async function loadDocument(namespace, docName) {
+    const response = await fetch(`https://raw.githubusercontent.com/PokeAPI/pokeapi.co/master/src/docs/${docName}.json`);
+    const apis = await response.json();
+    for (const api of apis) {
+        findNullable(api.exampleResponse, api.responseModels[0], api);
+        for (const [index, model] of api.responseModels.entries()) {
+            if (skips.includes(model.name)) {
+                continue;
+            }
+            const interface = namespace.addInterface({
+                name: model.name,
             });
-        });
-
-        // find description
-        let description = $(ele).prev('h4').prev('h6').prev('pre').prev('h6').prev('h3').prev('p').html();
-        if (description) {
-            description = turndownService.turndown(description);
-        }
-
-        result.push({ name, description, attributes });
-    });
-
-    // find nullable (based on examples, not accurate)
-    const findNullable = (name, data, modelName) => {
-        const model = result.find(model => (model.name === name || model.name === name.replace(/\<\w+\>/, '<T>')));
-        if (!model) {
-            console.error(`Cannot find model ${name} for ${JSON.stringify(data)}, in root api for ${modelName}`);
-            return;
-        }
-        Object.keys(data).forEach(key => {
-            const attribute = model.attributes.find(attribute => attribute.name === key);
-            if (!attribute) {
-                console.error(`Cannot find attribute ${key} in ${name}, in root api for ${modelName}`);
-                return;
-            }
-            if (data[key] === null && typeof data[key] === 'object') {
-                attribute.nullable = true;
-            } else if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
-                findNullable(attribute.dataType, data[key], modelName);
-            } else if (Array.isArray(data[key]) && attribute.dataType.substr(-2) === '[]') {
-                data[key].forEach(item => {
-                    if (typeof item === 'string' && attribute.dataType === 'string[]') {
-                        return;
-                    }
-                    if (typeof item === 'number' && attribute.dataType === 'number[]') {
-                        return;
-                    }
-                    findNullable(attribute.dataType.substr(0, attribute.dataType.length - 2), item, modelName);
+            if (index === 0) {
+                interface.addJsDoc({
+                    description: api.description,
                 });
             }
-        });
-    };
-
-    $('table').each((_, ele) => {
-        let name = $(ele).prev('h4').text();
-        if (!name) {
-            return;
+            for (const field of model.fields) {
+                interface.addProperty({
+                    name: field.name,
+                    type: field.nullable ? Writers.unionType(convertType(field.type), 'null') : convertType(field.type),
+                }).addJsDoc({
+                    description: field.description,
+                });
+            }
         }
-        let example = $(ele).prev('h4').prev('h6').prev('pre').text();
-        if (example) {
-            example = JSON.parse(example);
-            name = name.split(' ').join('');
-            findNullable(name, example, name);
-        }
-    });
-
-    return result;
+    }
+    apiList.push(...apis);
 }
 
-function renderInterface(models) {
-    return models.map(model =>
-`${model.description ? `/** ${model.description} */\n` : ''}interface ${model.name} {
-${model.attributes.map(attribute => 
-`    ${attribute.description ? `/** ${attribute.description} */\n    ` : ''}${attribute.name}: ${attribute.dataType}${attribute.nullable ? ' | null' : ''};`).join('\n')}
-}`).join('\n\n');
-}
-
-module.exports = async function() {
-    const models = await parse();
-    const interfaces = renderInterface(models);
-
-    const [endpoints, rootEndpoints] = await Promise.all([
-        axios.get('https://raw.githubusercontent.com/PokeAPI/pokedex-promise-v2/master/src/endpoints.json'),
-        axios.get('https://raw.githubusercontent.com/PokeAPI/pokedex-promise-v2/master/src/rootEndpoints.json')
-    ]);
-
-    const result = 
-`// Type definitions for pokedex-promise-v2 v3.x
+async function produceDefinition() {
+    const project = new Project();
+    const file = project.createSourceFile('index.d.ts', `// Type definitions for pokedex-promise-v2 v3.x
 // Project: https://github.com/PokeAPI/pokedex-promise-v2
 // Definitions by: Mudkip <https://github.com/mudkipme/>
-// Definitions: https://github.com/mudkipme/pokeapi-v2-typescript
+// Definitions: https://github.com/mudkipme/pokeapi-v2-typescript`, {
+    overwrite: true,
+});
 
-declare module "pokedex-promise-v2" {
-    interface APIResourceURL<T> extends String {}
-
-    namespace PokeAPI {
-${interfaces.split('\n').map(line => line.trim() ? '        ' + line : '').join('\n')}
-    }
-
-    interface PokeAPIOptions {
-        protocol?: "https" | "http";
-        hostName?: string;
-        versionPath?: string;
-        cacheLimit?: number;
-        timeout?: number;
-    }
-
-    interface RootEndPointInterval {
-        limit?: number;
-        offset?: number;
-    }
-
-    interface EndPointResult {
-${models.filter(model => model.description && model.name.indexOf('APIResource') === -1).map(model => 
-`        "${changeCase.paramCase(model.name)}": APIResourceURL<PokeAPI.NamedAPIResourceList<PokeAPI.${model.name}>>;`
-).join('\n')}
-    }
-
-    class PokeAPI {
-        constructor(options?: PokeAPIOptions);
-        resource(path: string): Promise<any>;
-        resource(paths: string[]): Promise<any[]>;
-        resource<T>(path: APIResourceURL<T>): Promise<T>;
-        resource<T>(paths: APIResourceURL<T>[]): Promise<T[]>;
-${endpoints.data.map(endpoint =>
-`        ${endpoint[0]}(${endpoint[0].match(/ById$/) ? 'id: number' : 'nameOrId: string | number'}): Promise<PokeAPI.${changeCase.pascalCase(endpoint[1])}>;
-        ${endpoint[0]}(${endpoint[0].match(/ById$/) ? 'ids: number[]' : 'nameOrIds: Array<string | number>'}): Promise<PokeAPI.${changeCase.pascalCase(endpoint[1])}[]>;`
-).join('\n')}
-${rootEndpoints.data.map(endpoint =>
-`        ${endpoint[0]}(interval?: RootEndPointInterval): Promise<${endpoint[1] ? `PokeAPI.NamedAPIResourceList<PokeAPI.${ changeCase.pascalCase(endpoint[1].substr(0, endpoint[1].length - 1))}>` : 'EndPointResult'}>;`
-).join('\n')}
-    }
-
-    export = PokeAPI;
-}`;
-
-    return result;
-}
-
-if (module.parent === null) {
-    module.exports().then((result) => {
-        fs.writeFileSync('index.generated.d.ts', result, { encoding: 'utf8' });
+    const module = file.addNamespace({
+        name: '"pokedex-promise-v2"',
     });
+    
+    module.addInterface({
+        name: 'APIResourceURL',
+        extends: 'String',
+        typeParameters: 'T'
+    });
+
+    const namespace = module.addNamespace({
+        name: 'PokeAPI',
+    });
+
+    namespace.addInterface({
+        name: 'APIResource',
+        typeParameters: 'T',
+        properties: [{
+            name: 'url',
+            type: 'APIResourceURL<T>',
+        }],
+    });
+
+    namespace.addInterface({
+        name: 'NamedAPIResource',
+        typeParameters: 'T',
+        properties: [{
+            name: 'name',
+            type: 'string',
+        }, {
+            name: 'url',
+            type: 'APIResourceURL<T>',
+        }],
+    });
+
+    namespace.addInterface({
+        name: 'APIResourceList',
+        typeParameters: 'T',
+        properties: [{
+            name: 'count',
+            type: 'number',
+        }, {
+            name: 'next',
+            type: Writers.unionType('APIResourceURL<APIResourceList<T>>', 'null'),
+        }, {
+            name: 'previous',
+            type: Writers.unionType('APIResourceURL<APIResourceList<T>>', 'null'),
+        }, {
+            name: 'results',
+            type: 'APIResource<T>[]',
+        }],
+    });
+
+    namespace.addInterface({
+        name: 'NamedAPIResourceList',
+        typeParameters: 'T',
+        properties: [{
+            name: 'count',
+            type: 'number',
+        }, {
+            name: 'next',
+            type: Writers.unionType('APIResourceURL<NamedAPIResourceList<T>>', 'null'),
+        }, {
+            name: 'previous',
+            type: Writers.unionType('APIResourceURL<NamedAPIResourceList<T>>', 'null'),
+        }, {
+            name: 'results',
+            type: 'NamedAPIResource<T>[]',
+        }],
+    });
+
+    for (const docName of docList) {
+        await loadDocument(namespace, docName);
+    }
+
+    module.addInterface({
+        name: 'PokeAPIOptions',
+        properties: [{
+            name: 'protocol',
+            type: Writers.unionType('"https"', '"http"'),
+            hasQuestionToken: true,
+        }, {
+            name: 'hostName',
+            type: 'string',
+            hasQuestionToken: true,
+        }, {
+            name: 'versionPath',
+            type: 'string',
+            hasQuestionToken: true,
+        }, {
+            name: 'cacheLimit',
+            type: 'number',
+            hasQuestionToken: true,
+        }, {
+            name: 'timeout',
+            type: 'number',
+            hasQuestionToken: true,
+        }],
+    });
+
+    module.addInterface({
+        name: 'RootEndPointInterval',
+        properties: [{
+            name: 'limit',
+            type: 'number',
+            hasQuestionToken: true,     
+        },{
+            name: 'offset',
+            type: 'number',
+            hasQuestionToken: true,     
+        }],
+    });
+
+    const apiMap = {};
+    for (const api of apiList) {
+        if (api.exampleRequest?.match(/^\/v2\/([\w-]+)\/\{[\w\s]+\}\/$/)) {
+            apiMap[api.exampleRequest.match(/^\/v2\/([\w-]+)/)[1]] = api;
+        }
+    }
+
+    module.addInterface({
+        name: 'EndPointResult',
+        properties: endpoints.map(([_, apiName]) => ({
+            name: `"${apiName}"`,
+            type: `APIResourceURL<PokeAPI.${Object.keys(apiMap[apiName].exampleResponse).includes('name') ? 'NamedAPIResourceList' : 'APIResourceList'}<PokeAPI.${apiMap[apiName].responseModels[0].name}>>`,
+        })),
+    });
+    
+    const cls = module.addClass({
+        name: 'PokeAPI',
+    });
+    cls.addConstructor({
+        parameters: [{
+            name: 'options',
+            type: 'PokeAPIOptions',
+            hasQuestionToken: true,
+        }],
+    });
+
+    for (const [method, apiName] of endpoints) {
+        cls.addMethod({
+            name: method,
+            parameters: [{
+                name: method.match(/ByName$/) ? 'nameOrId' : 'id',
+                type: method.match(/ByName$/) ? Writers.unionType('string', 'number') : 'number',
+            }],
+            returnType: `Promise<PokeAPI.${apiMap[apiName].responseModels[0].name}>`,
+        });
+        cls.addMethod({
+            name: method,
+            parameters: [{
+                name: method.match(/ByName$/) ? 'nameOrIds' : 'ids',
+                type: method.match(/ByName$/) ? 'Array<string | number>' : 'number[]',
+            }],
+            returnType: `Promise<PokeAPI.${apiMap[apiName].responseModels[0].name}[]>`,
+        });
+    }
+
+    cls.addMethod({
+        name: 'getEndpointsList',
+        returnType: 'EndPointResult',
+    });
+
+    for (const [method, path] of rootEndpoints) {
+        const apiName = path.replace(/\/$/, '');
+        if (!apiMap[apiName]) {
+            continue;
+        }
+        cls.addMethod({
+            name: method,
+            parameters: [{
+                name: 'interval',
+                type: 'RootEndPointInterval',
+                hasQuestionToken: true,
+            }],
+            returnType: `Promise<PokeAPI.${Object.keys(apiMap[apiName].exampleResponse).includes('name') ? 'NamedAPIResourceList' : 'APIResourceList'}<PokeAPI.${apiMap[apiName].responseModels[0].name}>>`,
+        });
+    }
+
+    module.addExportAssignment({
+        expression: 'PokeAPI',
+    });
+
+    await file.save();
 }
+
+produceDefinition().catch(e => console.warn(e));

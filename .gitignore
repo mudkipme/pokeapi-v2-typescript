@@ -1,3 +1,4 @@
 node_modules
 *.generated.d.ts
 .DS_Store
+package-lock.json

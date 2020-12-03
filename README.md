@@ -29,10 +29,6 @@ import Pokedex from "pokedex-promise-v2";
 npm run build
 ```
 
-This is a project to generate full type definitions for the RESTful API of PokeAPI. You can run the generator with the command above.
-
-The generator is based on the documents of `PokeAPI` and `pokedex-promise-v2`. However, due to several errors, mismatches and nullable attributes in PokeAPI documents and responses. The generated definitions need to be revised and corrected by human. The generator may also find some mismatches and output to `stderr`.
-
 ## License
 
 [MIT](LICENSE)
