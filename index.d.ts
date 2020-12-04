@@ -1475,6 +1475,10 @@ declare module "pokedex-promise-v2" {
 
     class PokeAPI {
         constructor(options?: PokeAPIOptions);
+        resource(path: string): Promise<unknown>;
+        resource(paths: string[]): Promise<unknown[]>;
+        resource<T>(path: APIResourceURL<T>): Promise<T>;
+        resource<T>(paths: APIResourceURL<T>[]): Promise<T[]>;
         getBerryByName(nameOrId: string | number): Promise<PokeAPI.Berry>;
         getBerryByName(nameOrIds: Array<string | number>): Promise<PokeAPI.Berry[]>;
         getBerryFirmnessByName(nameOrId: string | number): Promise<PokeAPI.BerryFirmness>;

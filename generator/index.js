@@ -238,12 +238,51 @@ async function produceDefinition() {
     const cls = module.addClass({
         name: 'PokeAPI',
     });
+
     cls.addConstructor({
         parameters: [{
             name: 'options',
             type: 'PokeAPIOptions',
             hasQuestionToken: true,
         }],
+    });
+
+    cls.addMethod({
+        name: 'resource',
+        parameters: [{
+            name: 'path',
+            type: 'string',
+        }],
+        returnType: 'Promise<unknown>',
+    });
+
+    cls.addMethod({
+        name: 'resource',
+        parameters: [{
+            name: 'paths',
+            type: 'string[]',
+        }],
+        returnType: 'Promise<unknown[]>',
+    });
+
+    cls.addMethod({
+        name: 'resource',
+        typeParameters: 'T',
+        parameters: [{
+            name: 'path',
+            type: 'APIResourceURL<T>',
+        }],
+        returnType: 'Promise<T>',
+    });
+
+    cls.addMethod({
+        name: 'resource',
+        typeParameters: 'T',
+        parameters: [{
+            name: 'paths',
+            type: 'APIResourceURL<T>[]',
+        }],
+        returnType: 'Promise<T[]>',
     });
 
     for (const [method, apiName] of endpoints) {
