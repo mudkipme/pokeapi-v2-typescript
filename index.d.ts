@@ -11,19 +11,19 @@ declare module "pokedex-promise-v2" {
             url: APIResourceURL<T>;
         }
 
-        interface NamedAPIResource<T> {
+        interface NamedAPIResource<T = string> {
             name: string;
             url: APIResourceURL<T>;
         }
 
-        interface APIResourceList<T> {
+        interface APIResourceList<T = string> {
             count: number;
             next: APIResourceURL<APIResourceList<T>> | null;
             previous: APIResourceURL<APIResourceList<T>> | null;
             results: APIResource<T>[];
         }
 
-        interface NamedAPIResourceList<T> {
+        interface NamedAPIResourceList<T = string> {
             count: number;
             next: APIResourceURL<NamedAPIResourceList<T>> | null;
             previous: APIResourceURL<NamedAPIResourceList<T>> | null;
